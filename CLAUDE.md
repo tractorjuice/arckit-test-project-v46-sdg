@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-This is the **ArcKit SDG Mono-Repo** — a single repository containing 17 UN Sustainable Development Goal workspaces, each with UK Government technology projects scaffolded for architecture governance using ArcKit v4.1.1.
+This is the **ArcKit SDG Mono-Repo** — a single repository containing 17 UN Sustainable Development Goal workspaces, each with UK Government technology projects scaffolded for architecture governance using ArcKit v4.6.1.
 
 **Total**: 17 SDG workspaces, 78 projects. No application code — this is a document-generation repository producing architecture governance artifacts (Markdown files).
 

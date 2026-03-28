@@ -87,4 +87,4 @@ arckit-test-project-v46-sdg/
 
 This repository is powered by [ArcKit](https://github.com/tractorjuice/arc-kit) -- an Enterprise Architecture Governance & Vendor Procurement Toolkit providing 60 slash commands for AI coding assistants.
 
-**Version**: 4.1.1
+**Version**: 4.6.1

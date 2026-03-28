@@ -13,4 +13,4 @@ See `guides/` for ArcKit command usage guides.
 
 ## ArcKit Version
 
-4.1.1
+4.6.1
