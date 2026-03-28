@@ -491,8 +491,9 @@
         // ============================================
         // State
         // ============================================
-        let sdgData = [];  // Array of { sdg, manifest }
-        let guidesManifest = null;  // Guides from first loaded SDG
+        let combinedManifest = null;  // The unified manifest.json
+        let sdgData = [];  // Array of { sdg, global, projects }
+        let guidesData = { guides: [], roleGuides: [] };
         let documentCache = new Map();
         let allDocuments = [];
         let currentTocObserver = null;
@@ -508,8 +509,9 @@
             return div.innerHTML;
         }
 
-        function getRawUrl(sdgId, path) {
-            return `../${sdgId}/${path}`;
+        // Paths in manifest are already prefixed: "sdg-01-no-poverty/projects/..."
+        function getRawUrl(fullPath) {
+            return `../${fullPath}`;
         }
 
         function extractTitle(path) {
@@ -586,20 +588,20 @@
         // ============================================
         function buildSearchIndex() {
             allDocuments = [];
-            sdgData.forEach(({ sdg, manifest }) => {
+            sdgData.forEach(({ sdg, global: globalDocs, projects }) => {
                 const sdgLabel = `SDG ${sdg.num}: ${sdg.name}`;
-                if (manifest.global) {
-                    manifest.global.forEach(doc => {
-                        allDocuments.push({ ...doc, sdgId: sdg.id, sdgLabel, searchText: `${doc.title} ${doc.category || ''} global ${sdgLabel}`.toLowerCase() });
+                if (globalDocs) {
+                    globalDocs.forEach(doc => {
+                        allDocuments.push({ ...doc, sdgLabel, searchText: `${doc.title} ${doc.category || ''} global ${sdgLabel}`.toLowerCase() });
                     });
                 }
-                if (manifest.projects) {
-                    manifest.projects.forEach(project => {
+                if (projects) {
+                    projects.forEach(project => {
                         const pName = project.name || project.id;
                         const addDocs = (docs, cat) => {
                             if (!docs) return;
                             docs.forEach(doc => {
-                                allDocuments.push({ ...doc, sdgId: sdg.id, sdgLabel, project: pName, category: cat || doc.category, searchText: `${doc.title} ${cat || doc.category || ''} ${pName} ${sdgLabel}`.toLowerCase() });
+                                allDocuments.push({ ...doc, sdgLabel, project: pName, category: cat || doc.category, searchText: `${doc.title} ${cat || doc.category || ''} ${pName} ${sdgLabel}`.toLowerCase() });
                             });
                         };
                         addDocs(project.documents);
@@ -611,20 +613,18 @@
                         addDocs(project.reviews, 'Reviews');
                         addDocs(project.vendorProfiles, 'Vendor Profiles');
                         addDocs(project.techNotes, 'Tech Notes');
-                        if (project.vendors) project.vendors.forEach(v => { if (v.documents) v.documents.forEach(doc => { allDocuments.push({ ...doc, sdgId: sdg.id, sdgLabel, project: pName, vendor: v.name, searchText: `${doc.title} ${v.name} vendor ${pName} ${sdgLabel}`.toLowerCase() }); }); });
+                        if (project.vendors) project.vendors.forEach(v => { if (v.documents) v.documents.forEach(doc => { allDocuments.push({ ...doc, sdgLabel, project: pName, vendor: v.name, searchText: `${doc.title} ${v.name} vendor ${pName} ${sdgLabel}`.toLowerCase() }); }); });
                     });
                 }
             });
 
             // Add guides
-            if (guidesManifest) {
-                if (guidesManifest.guides) guidesManifest.guides.forEach(doc => {
-                    allDocuments.push({ ...doc, sdgId: guidesManifest._sdgId, searchText: `${doc.title} ${doc.category || ''} guide`.toLowerCase() });
-                });
-                if (guidesManifest.roleGuides) guidesManifest.roleGuides.forEach(doc => {
-                    allDocuments.push({ ...doc, sdgId: guidesManifest._sdgId, searchText: `${doc.title} ${doc.family || ''} role ddat`.toLowerCase() });
-                });
-            }
+            if (guidesData.guides) guidesData.guides.forEach(doc => {
+                allDocuments.push({ ...doc, searchText: `${doc.title} ${doc.category || ''} guide`.toLowerCase() });
+            });
+            if (guidesData.roleGuides) guidesData.roleGuides.forEach(doc => {
+                allDocuments.push({ ...doc, searchText: `${doc.title} ${doc.family || ''} role ddat`.toLowerCase() });
+            });
         }
 
         function searchDocuments(query) {
@@ -641,7 +641,7 @@
                 const matches = searchDocuments(query);
                 if (matches.length === 0) { results.classList.remove('visible'); return; }
                 results.innerHTML = matches.map(doc => `
-                    <div class="app-search-result" data-sdg="${doc.sdgId}" data-path="${doc.path}">
+                    <div class="app-search-result" data-path="${doc.path}">
                         <div class="app-search-result-title">${doc.title}</div>
                         <div class="app-search-result-path">${doc.sdgLabel ? doc.sdgLabel + ' / ' : ''}${doc.project ? doc.project + ' / ' : ''}${doc.category || 'Document'}</div>
                     </div>
@@ -649,10 +649,9 @@
                 results.classList.add('visible');
                 results.querySelectorAll('.app-search-result').forEach(el => {
                     el.addEventListener('click', () => {
-                        const sdgId = el.dataset.sdg;
                         const path = el.dataset.path;
-                        window.location.hash = `${sdgId}/${path}`;
-                        loadDocument(sdgId, path);
+                        window.location.hash = path;
+                        loadDocument(path);
                         input.value = '';
                         results.classList.remove('visible');
                         closeMobileSidebar();
@@ -672,8 +671,8 @@
             const categoryCounts = {};
             const sdgMetrics = [];
 
-            sdgData.forEach(({ sdg, manifest }) => {
-                const realProjects = (manifest.projects || []).filter(p => /^\d{3}-/.test(p.id));
+            sdgData.forEach(({ sdg, global: globalDocs, projects }) => {
+                const realProjects = (projects || []).filter(p => /^\d{3}-/.test(p.id));
                 let sdgDocs = 0, sdgADRs = 0;
                 let sdgCoverage = 0;
 
@@ -706,8 +705,7 @@
                 });
 
                 // Add global docs
-                const globalDocs = manifest.global || [];
-                sdgDocs += globalDocs.length;
+                sdgDocs += (globalDocs || []).length;
 
                 totalProjects += realProjects.length;
                 totalDocs += sdgDocs;
@@ -890,12 +888,12 @@
         function showSdgDetail(sdgId) {
             const entry = sdgData.find(d => d.sdg.id === sdgId);
             if (!entry) return;
-            const { sdg, manifest } = entry;
+            const { sdg, global: globalDocs, projects } = entry;
             const content = document.getElementById('content');
             const toc = document.getElementById('toc');
             toc.style.display = 'none';
 
-            const realProjects = (manifest.projects || []).filter(p => /^\d{3}-/.test(p.id));
+            const realProjects = (projects || []).filter(p => /^\d{3}-/.test(p.id));
             let totalDocs = 0;
 
             let tableRows = '';
@@ -916,7 +914,7 @@
 
                 const firstDoc = docs[0] || diagrams[0] || decisions[0];
                 const nameCell = firstDoc
-                    ? `<a href="#${sdgId}/${firstDoc.path}" class="app-dashboard-link" data-sdg="${sdgId}" data-path="${firstDoc.path}">${escapeHtml(project.name || project.id)}</a>`
+                    ? `<a href="#${firstDoc.path}" class="app-dashboard-link" data-path="${firstDoc.path}">${escapeHtml(project.name || project.id)}</a>`
                     : escapeHtml(project.name || project.id);
 
                 tableRows += `<tr>
@@ -946,7 +944,7 @@
                         <div class="app-dashboard-kpi-label">Documents</div>
                     </div>
                     <div class="app-dashboard-kpi" style="border-top-color:${sdg.color}">
-                        <div class="app-dashboard-kpi-value">${(manifest.global || []).length}</div>
+                        <div class="app-dashboard-kpi-value">${(globalDocs || []).length}</div>
                         <div class="app-dashboard-kpi-label">Global Artifacts</div>
                     </div>
                 </div>
@@ -966,9 +964,9 @@
             content.querySelectorAll('a[data-path]').forEach(link => {
                 link.addEventListener('click', (e) => {
                     e.preventDefault();
-                    const s = link.dataset.sdg, p = link.dataset.path;
-                    window.location.hash = `${s}/${p}`;
-                    loadDocument(s, p);
+                    const p = link.dataset.path;
+                    window.location.hash = p;
+                    loadDocument(p);
                 });
             });
 
@@ -982,12 +980,12 @@
             const content = document.getElementById('content');
             const toc = document.getElementById('toc');
             toc.style.display = 'none';
-            if (!guidesManifest || !guidesManifest.guides || guidesManifest.guides.length === 0) {
+            if (!guidesData.guides || guidesData.guides.length === 0) {
                 content.innerHTML = '<div><h1>Guides</h1><p>No guides available.</p></div>';
                 return;
             }
             const byCategory = {};
-            guidesManifest.guides.forEach(guide => { const cat = guide.category || 'Other'; if (!byCategory[cat]) byCategory[cat] = []; byCategory[cat].push(guide); });
+            guidesData.guides.forEach(guide => { const cat = guide.category || 'Other'; if (!byCategory[cat]) byCategory[cat] = []; byCategory[cat].push(guide); });
             const categoryOrder = ['Getting Started', 'Discovery', 'Planning', 'Architecture', 'Governance', 'Compliance', 'Operations', 'Procurement', 'Integrations', 'Reporting'];
             const sorted = Object.keys(byCategory).sort((a, b) => { const ai = categoryOrder.indexOf(a), bi = categoryOrder.indexOf(b); return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi); });
             let guidesHtml = '';
@@ -995,13 +993,13 @@
                 guidesHtml += `<h2>${cat}</h2><ul class="app-guides-list">`;
                 byCategory[cat].forEach(guide => {
                     const badge = guide.status ? `<span class="guide-status ${guide.status}">${guide.status}</span>` : '';
-                    guidesHtml += `<li><a href="#${guidesManifest._sdgId}/${guide.path}" data-sdg="${guidesManifest._sdgId}" data-path="${guide.path}"><span>${guide.title}</span>${badge}</a></li>`;
+                    guidesHtml += `<li><a href="#${guide.path}" data-path="${guide.path}"><span>${guide.title}</span>${badge}</a></li>`;
                 });
                 guidesHtml += '</ul>';
             });
             content.innerHTML = `<div class="app-doc-header"><div class="app-doc-breadcrumb">Documentation</div><h1 class="app-doc-title">AI Command Guides</h1></div><div class="app-markdown"><p>These guides explain how to use each ArcKit command.</p>${guidesHtml}</div>`;
             content.querySelectorAll('a[data-path]').forEach(link => {
-                link.addEventListener('click', (e) => { e.preventDefault(); const s = link.dataset.sdg, p = link.dataset.path; window.location.hash = `${s}/${p}`; loadDocument(s, p); });
+                link.addEventListener('click', (e) => { e.preventDefault(); const p = link.dataset.path; window.location.hash = p; loadDocument(p); });
             });
         }
 
@@ -1009,12 +1007,12 @@
             const content = document.getElementById('content');
             const toc = document.getElementById('toc');
             toc.style.display = 'none';
-            if (!guidesManifest || !guidesManifest.roleGuides || guidesManifest.roleGuides.length === 0) {
+            if (!guidesData.roleGuides || guidesData.roleGuides.length === 0) {
                 content.innerHTML = '<div><h1>DDaT Role Guides</h1><p>No role guides available.</p></div>';
                 return;
             }
             const byFamily = {};
-            guidesManifest.roleGuides.forEach(g => { const f = g.family || 'Other'; if (!byFamily[f]) byFamily[f] = []; byFamily[f].push(g); });
+            guidesData.roleGuides.forEach(g => { const f = g.family || 'Other'; if (!byFamily[f]) byFamily[f] = []; byFamily[f].push(g); });
             const familyOrder = ['Architecture', 'Chief Digital and Data', 'Product and Delivery', 'Data', 'IT Operations', 'Software Development'];
             const sorted = Object.keys(byFamily).sort((a, b) => { const ai = familyOrder.indexOf(a), bi = familyOrder.indexOf(b); return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi); });
             let rolesHtml = '';
@@ -1022,13 +1020,13 @@
                 rolesHtml += `<h2>${f}</h2><ul class="app-guides-list">`;
                 byFamily[f].forEach(g => {
                     const badge = g.commandCount ? `<span class="guide-status beta">${g.commandCount} commands</span>` : '';
-                    rolesHtml += `<li><a href="#${guidesManifest._sdgId}/${g.path}" data-sdg="${guidesManifest._sdgId}" data-path="${g.path}"><span>${g.title}</span>${badge}</a></li>`;
+                    rolesHtml += `<li><a href="#${g.path}" data-path="${g.path}"><span>${g.title}</span>${badge}</a></li>`;
                 });
                 rolesHtml += '</ul>';
             });
             content.innerHTML = `<div class="app-doc-header"><div class="app-doc-breadcrumb">Documentation</div><h1 class="app-doc-title">DDaT Role Guides</h1></div><div class="app-markdown"><p>Which ArcKit commands should <strong>you</strong> use? These guides map commands to <a href="https://ddat-capability-framework.service.gov.uk/" target="_blank" rel="noopener">DDaT roles</a>.</p>${rolesHtml}</div>`;
             content.querySelectorAll('a[data-path]').forEach(link => {
-                link.addEventListener('click', (e) => { e.preventDefault(); const s = link.dataset.sdg, p = link.dataset.path; window.location.hash = `${s}/${p}`; loadDocument(s, p); });
+                link.addEventListener('click', (e) => { e.preventDefault(); const p = link.dataset.path; window.location.hash = p; loadDocument(p); });
             });
         }
 
@@ -1039,13 +1037,13 @@
             const container = document.getElementById('nav-container');
             let html = '';
 
-            sdgData.forEach(({ sdg, manifest }) => {
-                const realProjects = (manifest.projects || []).filter(p => /^\d{3}-/.test(p.id));
+            sdgData.forEach(({ sdg, global: globalDocs, projects }) => {
+                const realProjects = (projects || []).filter(p => /^\d{3}-/.test(p.id));
                 const docCount = realProjects.reduce((sum, p) => {
                     return sum + (p.documents || []).length + (p.diagrams || []).length + (p.decisions || []).length +
                         (p.wardleyMaps || []).length + (p.dataContracts || []).length + (p.research || []).length +
                         (p.reviews || []).length + (p.vendorProfiles || []).length + (p.techNotes || []).length;
-                }, 0) + (manifest.global || []).length;
+                }, 0) + (globalDocs || []).length;
 
                 html += `<div class="app-nav-section">
                     <button class="app-nav-section-header collapsed" data-sdg="${sdg.id}">
@@ -1061,10 +1059,10 @@
                     <ul class="app-nav-list" style="display:none">`;
 
                 // Global docs
-                if (manifest.global && manifest.global.length > 0) {
+                if (globalDocs && globalDocs.length > 0) {
                     html += '<li class="app-nav-category">Global</li>';
-                    manifest.global.forEach(doc => {
-                        html += `<li><a href="#${sdg.id}/${doc.path}" data-sdg="${sdg.id}" data-path="${doc.path}">${doc.title}</a></li>`;
+                    globalDocs.forEach(doc => {
+                        html += `<li><a href="#${doc.path}" data-path="${doc.path}">${doc.title}</a></li>`;
                     });
                 }
 
@@ -1076,7 +1074,7 @@
                     const addNavDocs = (docs) => {
                         if (!docs) return;
                         docs.forEach(doc => {
-                            html += `<li><a href="#${sdg.id}/${doc.path}" data-sdg="${sdg.id}" data-path="${doc.path}" style="padding-left:2.5rem;font-size:0.8rem">${doc.title}</a></li>`;
+                            html += `<li><a href="#${doc.path}" data-path="${doc.path}" style="padding-left:2.5rem;font-size:0.8rem">${doc.title}</a></li>`;
                         });
                     };
 
@@ -1109,10 +1107,9 @@
             container.querySelectorAll('a[data-path]').forEach(link => {
                 link.addEventListener('click', (e) => {
                     e.preventDefault();
-                    const sdgId = link.dataset.sdg;
                     const path = link.dataset.path;
-                    window.location.hash = `${sdgId}/${path}`;
-                    loadDocument(sdgId, path);
+                    window.location.hash = path;
+                    loadDocument(path);
                     container.querySelectorAll('a').forEach(a => a.classList.remove('active'));
                     link.classList.add('active');
                     closeMobileSidebar();
@@ -1128,32 +1125,34 @@
             activePanZoomInstances = [];
         }
 
-        async function loadDocument(sdgId, path) {
+        async function loadDocument(fullPath) {
             const content = document.getElementById('content');
             const toc = document.getElementById('toc');
             destroyPanZoomInstances();
             toc.style.display = 'none';
             content.innerHTML = '<div class="app-loading"><div class="app-spinner"></div>Loading document...</div>';
 
-            const cacheKey = `${sdgId}/${path}`;
             try {
                 let markdown;
-                if (documentCache.has(cacheKey)) {
-                    markdown = documentCache.get(cacheKey);
+                if (documentCache.has(fullPath)) {
+                    markdown = documentCache.get(fullPath);
                 } else {
-                    const response = await fetch(getRawUrl(sdgId, path));
+                    const response = await fetch(getRawUrl(fullPath));
                     if (!response.ok) throw new Error(response.status === 404 ? 'not_found' : `fetch_error_${response.status}`);
                     markdown = await response.text();
-                    documentCache.set(cacheKey, markdown);
+                    documentCache.set(fullPath, markdown);
                 }
 
-                let title = extractTitle(path);
+                let title = extractTitle(fullPath);
                 const h1Match = markdown.match(/^#\s+(.+)$/m);
                 if (h1Match) { title = h1Match[1]; markdown = markdown.replace(/^#\s+.+$/m, '').trimStart(); }
 
+                // Extract SDG info from path (e.g. "sdg-01-no-poverty/projects/...")
+                const sdgId = fullPath.split('/')[0];
                 const sdgInfo = SDGS.find(s => s.id === sdgId);
                 const sdgLabel = sdgInfo ? `SDG ${sdgInfo.num}: ${sdgInfo.name}` : sdgId;
-                const parts = path.split('/');
+                const pathAfterSdg = fullPath.substring(fullPath.indexOf('/') + 1);
+                const parts = pathAfterSdg.split('/');
                 const breadcrumb = `<a href="#dashboard" class="app-dashboard-link">Dashboard</a> / <a href="#sdg-${sdgId}" class="app-dashboard-link">${sdgLabel}</a> / ${parts.slice(0, -1).join(' / ')}`;
 
                 const html = marked.parse(markdown);
@@ -1165,8 +1164,8 @@
                     <div class="app-markdown">${html}</div>
                 `;
 
-                // Rewrite relative .md links
-                const docDir = path.substring(0, path.lastIndexOf('/') + 1);
+                // Rewrite relative .md links - resolve within the full path context
+                const docDir = fullPath.substring(0, fullPath.lastIndexOf('/') + 1);
                 content.querySelectorAll('.app-markdown a[href]').forEach(a => {
                     const href = a.getAttribute('href');
                     if (!href || href.startsWith('http') || href.startsWith('#') || href.startsWith('mailto:')) return;
@@ -1176,8 +1175,8 @@
                     pathParts.forEach(p => { if (p === '..') resolved.pop(); else if (p && p !== '.') resolved.push(p); });
                     const fragment = href.includes('#') ? '#' + href.split('#').slice(1).join('#') : '';
                     const resolvedPath = resolved.join('/') + fragment;
-                    a.href = '#' + sdgId + '/' + resolvedPath;
-                    a.addEventListener('click', function(e) { e.preventDefault(); window.location.hash = sdgId + '/' + resolvedPath; loadDocument(sdgId, resolved.join('/')); });
+                    a.href = '#' + resolvedPath;
+                    a.addEventListener('click', function(e) { e.preventDefault(); window.location.hash = resolvedPath; loadDocument(resolved.join('/')); });
                 });
 
                 buildTableOfContents(content.querySelector('.app-markdown'));
@@ -1193,15 +1192,15 @@
                 document.getElementById('main-content').scrollTo(0, 0);
             } catch (error) {
                 const header = document.createElement('div'); header.className = 'app-doc-header';
-                const bc = document.createElement('div'); bc.className = 'app-doc-breadcrumb'; bc.textContent = `${sdgId} / ${path.split('/').slice(0, -1).join(' / ')}`;
-                const t = document.createElement('h1'); t.className = 'app-doc-title'; t.textContent = extractTitle(path);
+                const bc = document.createElement('div'); bc.className = 'app-doc-breadcrumb'; bc.textContent = fullPath.split('/').slice(0, -1).join(' / ');
+                const t = document.createElement('h1'); t.className = 'app-doc-title'; t.textContent = extractTitle(fullPath);
                 header.appendChild(bc); header.appendChild(t);
                 const notice = document.createElement('div');
                 notice.style.cssText = 'background:var(--background-light);border-left:4px solid var(--primary-color);padding:1.25rem;margin:1.5rem 0;';
                 const h = document.createElement('p'); h.style.cssText = 'margin:0 0 0.75rem 0;font-weight:700;'; h.textContent = 'Document not found';
                 const d = document.createElement('p'); d.style.cssText = 'margin:0;color:var(--text-muted);';
                 d.appendChild(document.createTextNode('The file '));
-                const code = document.createElement('code'); code.textContent = `${sdgId}/${path}`;
+                const code = document.createElement('code'); code.textContent = fullPath;
                 d.appendChild(code);
                 d.appendChild(document.createTextNode(' could not be loaded.'));
                 notice.appendChild(h); notice.appendChild(d);
@@ -1354,13 +1353,11 @@
             }
 
             // Document: #sdg-01-no-poverty/projects/001-.../ARC-001-REQ-v1.0.md
-            const slashIdx = hash.indexOf('/');
-            if (slashIdx > 0) {
-                const sdgId = hash.substring(0, slashIdx);
-                const path = hash.substring(slashIdx + 1);
-                loadDocument(sdgId, path);
+            // or guide: #sdg-01-no-poverty/docs/guides/requirements.md
+            if (hash.startsWith('sdg-')) {
+                loadDocument(hash);
                 // Update active state
-                const link = document.querySelector(`a[data-sdg="${sdgId}"][data-path="${path}"]`);
+                const link = document.querySelector(`a[data-path="${hash}"]`);
                 if (link) {
                     document.querySelectorAll('#nav-container a').forEach(a => a.classList.remove('active'));
                     link.classList.add('active');
@@ -1394,30 +1391,28 @@
                 }
             });
 
-            // Load all manifests in parallel
-            const results = await Promise.allSettled(
-                SDGS.map(async (sdg) => {
-                    const response = await fetch(`../${sdg.id}/docs/manifest.json`);
-                    if (!response.ok) throw new Error(`Failed: ${sdg.id}`);
-                    const manifest = await response.json();
-                    manifest._sdgId = sdg.id;
-                    return { sdg, manifest };
-                })
-            );
+            // Load the combined manifest
+            const response = await fetch('manifest.json');
+            if (!response.ok) throw new Error('manifest.json not found');
+            combinedManifest = await response.json();
 
-            sdgData = results.filter(r => r.status === 'fulfilled').map(r => r.value);
+            // Populate TYPE_CATEGORIES
+            if (combinedManifest.typeCategories) TYPE_CATEGORIES = combinedManifest.typeCategories;
+
+            // Build sdgData from combined manifest
+            sdgData = (combinedManifest.sdgs || []).map(sdgEntry => {
+                const sdg = SDGS.find(s => s.id === sdgEntry.id) || { id: sdgEntry.id, num: '?', name: sdgEntry.id, color: '#b1b4b6' };
+                return { sdg, global: sdgEntry.global || [], projects: sdgEntry.projects || [] };
+            });
 
             if (sdgData.length === 0) {
-                document.getElementById('content').innerHTML = '<div class="app-error">No SDG workspace manifests found. Ensure each sdg-*/docs/manifest.json exists.</div>';
+                document.getElementById('content').innerHTML = '<div class="app-error">No SDG workspaces found in manifest.json.</div>';
                 document.getElementById('nav-container').innerHTML = '<div class="app-error">No workspaces loaded</div>';
                 return;
             }
 
-            // Use first loaded SDG for guides (all identical)
-            guidesManifest = sdgData[0].manifest;
-
-            // Populate TYPE_CATEGORIES from first manifest
-            if (guidesManifest.typeCategories) TYPE_CATEGORIES = guidesManifest.typeCategories;
+            // Guides (shared across all SDGs, paths already prefixed in manifest)
+            guidesData = { guides: combinedManifest.guides || [], roleGuides: combinedManifest.roleGuides || [] };
 
             // Footer
             document.getElementById('footer-generated').textContent = `${sdgData.length} SDG workspaces loaded`;
