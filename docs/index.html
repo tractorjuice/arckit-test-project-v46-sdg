@@ -510,8 +510,15 @@
         }
 
         // Paths in manifest are already prefixed: "sdg-01-no-poverty/projects/..."
+        // Try relative path first, fall back to GitHub raw content
+        const RAW_BASE = 'https://raw.githubusercontent.com/tractorjuice/arckit-test-project-v46-sdg/main';
+
         function getRawUrl(fullPath) {
             return `../${fullPath}`;
+        }
+
+        function getFallbackUrl(fullPath) {
+            return `${RAW_BASE}/${fullPath}`;
         }
 
         function extractTitle(path) {
@@ -1137,7 +1144,11 @@
                 if (documentCache.has(fullPath)) {
                     markdown = documentCache.get(fullPath);
                 } else {
-                    const response = await fetch(getRawUrl(fullPath));
+                    let response = await fetch(getRawUrl(fullPath));
+                    if (!response.ok) {
+                        // Fallback to GitHub raw content URL
+                        response = await fetch(getFallbackUrl(fullPath));
+                    }
                     if (!response.ok) throw new Error(response.status === 404 ? 'not_found' : `fetch_error_${response.status}`);
                     markdown = await response.text();
                     documentCache.set(fullPath, markdown);
