@@ -1179,7 +1179,13 @@
                 const docDir = fullPath.substring(0, fullPath.lastIndexOf('/') + 1);
                 content.querySelectorAll('.app-markdown a[href]').forEach(a => {
                     const href = a.getAttribute('href');
-                    if (!href || href.startsWith('http') || href.startsWith('#') || href.startsWith('mailto:')) return;
+                    if (!href || href.startsWith('http') || href.startsWith('mailto:')) return;
+                    if (href.startsWith('#')) {
+                        // A link to a heading in this document: scroll, and leave the hash alone,
+                        // because the hash is how a document is opened.
+                        a.addEventListener('click', function(e) { e.preventDefault(); scrollToSection(href.slice(1)); });
+                        return;
+                    }
                     if (!href.endsWith('.md') && !href.includes('.md#')) return;
                     const pathParts = (docDir + href.split('#')[0]).split('/');
                     const resolved = [];
@@ -1350,8 +1356,28 @@
         // ============================================
         // Hash Routing
         // ============================================
+        // The view or document on show, so a link to a section can put the address back.
+        let shownHash = '';
+
+        function scrollToSection(id) {
+            let name = id;
+            try { name = decodeURIComponent(id); } catch (e) { /* keep it as written */ }
+            const target = document.getElementById(name);
+            if (target) target.scrollIntoView({ behavior: 'smooth' });
+            return !!target;
+        }
+
         function handleHash() {
             const hash = window.location.hash.slice(1);
+            const isRoute = !hash || ['dashboard', 'guides', 'roles'].includes(hash) || hash.startsWith('sdg-');
+            if (!isRoute && shownHash) {
+                // A link to a heading on the page on show, not a page of its own:
+                // go to the heading and keep the address on that page.
+                scrollToSection(hash);
+                history.replaceState(null, '', '#' + shownHash);
+                return;
+            }
+            shownHash = isRoute ? (hash || 'dashboard') : 'dashboard';
             if (!hash || hash === 'dashboard') { showDashboard(); return; }
             if (hash === 'guides') { showGuidesIndex(); return; }
             if (hash === 'roles') { showRolesIndex(); return; }
